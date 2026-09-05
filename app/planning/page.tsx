@@ -1,26 +1,353 @@
 'use client'
-import { useEffect, useMemo, useState } from 'react'
+
+import { useEffect, useState } from 'react'
 import Link from 'next/link'
 import { ensureAccount, mondayOf, addDays, formatRange } from '@/lib/data'
 import { supabaseBrowser } from '@/lib/supabase-browser'
 
-type Recipe={id:string;title:string;kcal_per_serving:number|null;vegetarian:boolean;category:string;prep_minutes:number;cook_minutes:number}
-type Item={id:string;menu_date:string;meal_type:string;servings:number;is_free_meal:boolean;recipe_id:string|null;recipes:Recipe|null}
-const days=['Lundi','Mardi','Mercredi','Jeudi','Vendredi','Samedi','Dimanche']
+type Recipe = {
+  id: string
+  title: string
+  kcal: number | null
+  vegetarian: boolean
+  category: string
+  meal_type: string
+  prep_min: number
+  cook_min: number
+}
 
-export default function Planning(){
- const [start,setStart]=useState(mondayOf()); const [household,setHousehold]=useState<string|null>(null); const [items,setItems]=useState<Item[]>([]); const [recipes,setRecipes]=useState<Recipe[]>([]); const [loading,setLoading]=useState(true); const [change,setChange]=useState<{date:string;slot:string;current?:string}|null>(null); const [shopping,setShopping]=useState<any[]>([])
- async function load(){const a=await ensureAccount();if(!a){setLoading(false);return}setHousehold(a.householdId);const sb=supabaseBrowser();const {data:week}=await sb.from('menu_weeks').select('id').eq('household_id',a.householdId).eq('week_start',start).maybeSingle();if(week){const {data}=await sb.from('menu_items').select('id,menu_date,meal_type,servings,is_free_meal,recipe_id,recipes(id,title,kcal_per_serving,vegetarian,category,prep_minutes,cook_minutes)').eq('menu_week_id',week.id).order('menu_date');setItems((data||[]) as any);const {data:shop}=await sb.from('shopping_items').select('*').eq('household_id',a.householdId).eq('week_start',start).order('checked').order('name');setShopping(shop||[])}else{setItems([]);setShopping([])}const {data:r}=await sb.from('recipes').select('id,title,kcal_per_serving,vegetarian,category,prep_minutes,cook_minutes').order('title');setRecipes(r||[]);setLoading(false)}
- useEffect(()=>{setLoading(true);load()},[start])
- async function generate(){if(!household||!recipes.length)return;const sb=supabaseBrowser();const {data:week}=await sb.from('menu_weeks').upsert({household_id:household,week_start:start,kcal_target:2000},{onConflict:'household_id,week_start'}).select('id').single();if(!week)return;await sb.from('menu_items').delete().eq('menu_week_id',week.id);const breakfasts=recipes.filter(r=>r.category==='petit_dejeuner');const dinners=recipes.filter(r=>['leger','vegetarien','reconfort'].includes(r.category));const freshLunches=recipes.filter(r=>r.category==='leger'||r.category==='vegetarien');const rows:any[]=[];for(let i=0;i<7;i++){const date=addDays(start,i);const b=breakfasts[(i*3)%breakfasts.length];const free=i===4;const d=free?null:dinners[(i*5+2)%dinners.length];rows.push({menu_week_id:week.id,menu_date:date,meal_type:'petit_dejeuner',recipe_id:b?.id??null,servings:1,is_free_meal:false});rows.push({menu_week_id:week.id,menu_date:date,meal_type:'diner',recipe_id:d?.id??null,servings:6,is_free_meal:free});if(i>=1&&i<=4){const prevDinner=dinners[((i-1)*5+2)%dinners.length];rows.push({menu_week_id:week.id,menu_date:date,meal_type:'dejeuner',recipe_id:prevDinner?.id??null,servings:2,is_free_meal:false})}else{const l=freshLunches[(i*7+1)%freshLunches.length];rows.push({menu_week_id:week.id,menu_date:date,meal_type:'dejeuner',recipe_id:l?.id??null,servings:2,is_free_meal:false})}}await sb.from('menu_items').insert(rows);await rebuildShopping(week.id);await load()}
- async function rebuildShopping(weekId:string){if(!household)return;const sb=supabaseBrowser();await sb.from('shopping_items').delete().eq('household_id',household).eq('week_start',start);const {data:mi}=await sb.from('menu_items').select('recipe_id,servings,is_free_meal').eq('menu_week_id',weekId).not('recipe_id','is',null);const ids=(mi||[]).map(x=>x.recipe_id).filter(Boolean);if(!ids.length)return;const {data:ri}=await sb.from('recipe_ingredients').select('recipe_id,ingredient_id,quantity,unit,ingredients(name)').in('recipe_id',ids);const servingByRecipe=new Map<string,number>();for(const x of mi||[])servingByRecipe.set(x.recipe_id!, (servingByRecipe.get(x.recipe_id!)||0)+x.servings);const agg=new Map<string,any>();for(const x of (ri||[]) as any[]){const key=`${x.ingredient_id}|${x.unit}`;const factor=servingByRecipe.get(x.recipe_id)||1;const cur=agg.get(key)||{household_id:household,week_start:start,name:x.ingredients?.name||'Ingrédient',quantity:0,unit:x.unit,ingredient_id:x.ingredient_id};cur.quantity+=Number(x.quantity)*factor;agg.set(key,cur)}if(agg.size)await sb.from('shopping_items').insert([...agg.values()])}
- async function changeRecipe(r:Recipe){if(!change||!household)return;const sb=supabaseBrowser();const {data:week}=await sb.from('menu_weeks').select('id').eq('household_id',household).eq('week_start',start).single();if(!week)return;const servings=change.slot==='petit_dejeuner'?1:change.slot==='diner'?6:2;await sb.from('menu_items').update({recipe_id:r.id,is_free_meal:false,servings}).eq('menu_week_id',week.id).eq('menu_date',change.date).eq('meal_type',change.slot);await rebuildShopping(week.id);setChange(null);load()}
- async function toggleShopping(id:string,checked:boolean){await supabaseBrowser().from('shopping_items').update({checked:!checked,updated_at:new Date().toISOString()}).eq('id',id);setShopping(x=>x.map(i=>i.id===id?{...i,checked:!checked}:i))}
- const shown=useMemo(()=>items.reduce((m,x)=>{(m[x.menu_date]??=[]).push(x);return m},{} as Record<string,Item[]>),[items])
- if(loading)return <div className="loading">Chargement…</div>
- return <><div className="top"><div><div className="muted">Menus & courses</div><h1>Planning</h1></div><button className="btn" onClick={generate}>Générer la semaine</button></div><div className="weeknav"><button onClick={()=>setStart(addDays(start,-7))}>‹</button><strong>{formatRange(start)}</strong><button onClick={()=>setStart(addDays(start,7))}>›</button></div>
- {days.map((day,i)=>{const date=addDays(start,i);const list=shown[date]||[];const by=(slot:string)=>list.find(x=>x.meal_type===slot);const b=by('petit_dejeuner'),l=by('dejeuner'),d=by('diner');return <section className="card day" key={date}><div className="row"><h2>{day}</h2>{d?.is_free_meal&&<span className="tag">Repas libre</span>}</div><Meal item={b} icon="☀️" label="Petit-déjeuner" onChange={()=>setChange({date,slot:'petit_dejeuner',current:b?.recipe_id||undefined})}/><Meal item={l} icon="🍱" label="Déjeuner" lunch={i>=1&&i<=4} onChange={()=>setChange({date,slot:'dejeuner',current:l?.recipe_id||undefined})}/><Meal item={d} icon="🌙" label="Dîner" onChange={d?.is_free_meal?undefined:()=>setChange({date,slot:'diner',current:d?.recipe_id||undefined})}/></section>})}
- <section className="card"><div className="row"><h2>🛒 Courses</h2><span className="tag">{shopping.filter(x=>!x.checked).length} restantes</span></div>{shopping.length?shopping.map(x=><button className={`shopping ${x.checked?'done':''}`} key={x.id} onClick={()=>toggleShopping(x.id,x.checked)}><span>{x.checked?'☑':'□'}</span><span>{x.name}</span><strong>{Math.round(Number(x.quantity)*10)/10}{x.unit==='unité'?'':` ${x.unit}`}</strong></button>):<p className="muted">Génère la semaine pour calculer automatiquement les courses.</p>}</section>
- {change&&<div className="overlay" onClick={()=>setChange(null)}><div className="modal" onClick={e=>e.stopPropagation()}><button className="close" onClick={()=>setChange(null)}>×</button><h2>Changer le repas</h2><p className="muted">3 propositions, avec au moins une option végétarienne pour le déjeuner/dîner.</p>{suggestions(recipes,change.slot,change.current).map(r=><button className="option" key={r.id} onClick={()=>changeRecipe(r)}><strong>{r.title}</strong><span>{r.kcal_per_serving?`${Math.round(r.kcal_per_serving)} kcal`:''} · {r.prep_minutes+r.cook_minutes} min {r.vegetarian?'· végétarien':''}</span></button>)}</div></div>}</>}
-function suggestions(recipes:Recipe[],slot:string,current?:string){let pool=slot==='petit_dejeuner'?recipes.filter(r=>r.category==='petit_dejeuner'):recipes.filter(r=>['leger','vegetarien','reconfort'].includes(r.category));pool=pool.filter(r=>r.id!==current);const veg=pool.find(r=>r.vegetarian);const others=pool.filter(r=>r.id!==veg?.id).slice(0,2);return slot==='petit_dejeuner'?pool.slice(0,3):[...(veg?[veg]:[]),...others].slice(0,3)}
-function Meal({item,icon,label,onChange,lunch}:{item?:Item;icon:string;label:string;onChange?:()=>void;lunch?:boolean}){const content=<div className="meal"><div className="thumb">{icon}</div><div><div className="muted">{label}</div><strong>{item?.is_free_meal?'Repas libre':item?.recipes?.title||'À planifier'}</strong><div className="kcal">{lunch?'2 adultes · restes du dîner précédent':item?.recipes?.kcal_per_serving?`${Math.round(item.recipes.kcal_per_serving)} kcal / portion`:item?.servings?`${item.servings} portions`:''}</div></div>{onChange&&<button className="btn secondary" onClick={e=>{e.preventDefault();onChange()}}>Changer</button>}</div>;return item?.recipe_id&&!item?.is_free_meal?<Link className="meal-link" href={`/recipes?recipe=${item.recipe_id}`}>{content}</Link>:content}
+type Item = {
+  id: string
+  menu_date: string
+  slot: string
+  servings: number
+  is_free_meal: boolean
+  recipe_id: string | null
+  recipes: Recipe | null
+}
+
+const days = ['Lundi','Mardi','Mercredi','Jeudi','Vendredi','Samedi','Dimanche']
+
+export default function Planning() {
+  const [start, setStart] = useState(mondayOf())
+  const [household, setHousehold] = useState<string | null>(null)
+  const [items, setItems] = useState<Item[]>([])
+  const [recipes, setRecipes] = useState<Recipe[]>([])
+  const [loading, setLoading] = useState(true)
+  const [error, setError] = useState('')
+
+  async function load() {
+    setLoading(true)
+    setError('')
+
+    const account = await ensureAccount()
+
+    if (!account?.householdId) {
+      setError('Compte ou foyer introuvable.')
+      setLoading(false)
+      return
+    }
+
+    setHousehold(account.householdId)
+
+    const sb = supabaseBrowser()
+
+    const { data: week, error: weekError } = await sb
+      .from('menu_weeks')
+      .select('id')
+      .eq('household_id', account.householdId)
+      .eq('week_start', start)
+      .maybeSingle()
+
+    if (weekError) {
+      setError(weekError.message)
+      setLoading(false)
+      return
+    }
+
+    if (week) {
+      const { data, error: itemsError } = await sb
+        .from('menu_items')
+        .select(`
+          id,
+          menu_date,
+          slot,
+          servings,
+          is_free_meal,
+          recipe_id,
+          recipes (
+            id,
+            title,
+            kcal,
+            vegetarian,
+            category,
+            meal_type,
+            prep_min,
+            cook_min
+          )
+        `)
+        .eq('week_id', week.id)
+        .order('menu_date')
+
+      if (itemsError) {
+        setError(itemsError.message)
+      } else {
+        setItems((data || []) as any)
+      }
+    } else {
+      setItems([])
+    }
+
+    const { data: r, error: recipesError } = await sb
+      .from('recipes')
+      .select('id,title,kcal,vegetarian,category,meal_type,prep_min,cook_min')
+      .order('title')
+
+    if (recipesError) {
+      setError(recipesError.message)
+    } else {
+      setRecipes((r || []) as Recipe[])
+    }
+
+    setLoading(false)
+  }
+
+  useEffect(() => {
+    load()
+  }, [start])
+
+  async function generate() {
+    if (!household || !recipes.length) {
+      setError('Aucune recette disponible.')
+      return
+    }
+
+    setLoading(true)
+    setError('')
+
+    const sb = supabaseBrowser()
+
+    const { data: week, error: weekError } = await sb
+      .from('menu_weeks')
+      .upsert(
+        {
+          household_id: household,
+          week_start: start
+        },
+        {
+          onConflict: 'household_id,week_start'
+        }
+      )
+      .select('id')
+      .single()
+
+    if (weekError || !week) {
+      setError(weekError?.message || 'Impossible de créer la semaine.')
+      setLoading(false)
+      return
+    }
+
+    const breakfasts = recipes.filter(r => r.meal_type === 'breakfast')
+    const lunches = recipes.filter(r => r.meal_type === 'lunch' || r.meal_type === 'dinner')
+    const dinners = recipes.filter(r => r.meal_type === 'dinner')
+
+    if (!breakfasts.length || !dinners.length) {
+      setError('Il manque des recettes de petit-déjeuner ou de dîner.')
+      setLoading(false)
+      return
+    }
+
+    await sb
+      .from('menu_items')
+      .delete()
+      .eq('week_id', week.id)
+
+    const rows: any[] = []
+
+    for (let i = 0; i < 7; i++) {
+      const date = addDays(start, i)
+
+      const breakfast = breakfasts[i % breakfasts.length]
+
+      rows.push({
+        week_id: week.id,
+        menu_date: date,
+        slot: 'breakfast',
+        recipe_id: breakfast.id,
+        servings: 1,
+        is_free_meal: false
+      })
+
+      const free = i === 4
+
+      if (free) {
+        rows.push({
+          week_id: week.id,
+          menu_date: date,
+          slot: 'dinner',
+          recipe_id: null,
+          servings: 6,
+          is_free_meal: true
+        })
+      } else {
+        const dinner = dinners[(i + 2) % dinners.length]
+
+        rows.push({
+          week_id: week.id,
+          menu_date: date,
+          slot: 'dinner',
+          recipe_id: dinner.id,
+          servings: 6,
+          is_free_meal: false
+        })
+      }
+
+      const lunch = lunches[(i + 1) % lunches.length]
+
+      rows.push({
+        week_id: week.id,
+        menu_date: date,
+        slot: 'lunch',
+        recipe_id: lunch.id,
+        servings: 2,
+        is_free_meal: false
+      })
+    }
+
+    const { error: insertError } = await sb
+      .from('menu_items')
+      .insert(rows)
+
+    if (insertError) {
+      setError(insertError.message)
+      setLoading(false)
+      return
+    }
+
+    await load()
+  }
+
+  const shown: Record<string, Item[]> = {}
+
+  for (const item of items) {
+    if (!shown[item.menu_date]) shown[item.menu_date] = []
+    shown[item.menu_date].push(item)
+  }
+
+  if (loading) {
+    return <div className="loading">Chargement…</div>
+  }
+
+  return (
+    <>
+      <div className="top">
+        <div>
+          <div className="muted">Menus & courses</div>
+          <h1>Planning</h1>
+        </div>
+
+        <button className="btn" onClick={generate}>
+          Générer la semaine
+        </button>
+      </div>
+
+      {error && (
+        <div className="card" style={{ marginBottom: 20 }}>
+          <strong>Erreur :</strong> {error}
+        </div>
+      )}
+
+      <div className="weeknav">
+        <button onClick={() => setStart(addDays(start, -7))}>‹</button>
+        <strong>{formatRange(start)}</strong>
+        <button onClick={() => setStart(addDays(start, 7))}>›</button>
+      </div>
+
+      {days.map((day, i) => {
+        const date = addDays(start, i)
+        const list = shown[date] || []
+
+        const breakfast = list.find(x => x.slot === 'breakfast')
+        const lunch = list.find(x => x.slot === 'lunch')
+        const dinner = list.find(x => x.slot === 'dinner')
+
+        return (
+          <section className="card day" key={date}>
+            <div className="row">
+              <h2>{day}</h2>
+              {dinner?.is_free_meal && <span className="tag">Repas libre</span>}
+            </div>
+
+            <Meal
+              item={breakfast}
+              icon="☀️"
+              label="Petit-déjeuner"
+            />
+
+            <Meal
+              item={lunch}
+              icon="🍱"
+              label="Déjeuner"
+            />
+
+            <Meal
+              item={dinner}
+              icon="🌙"
+              label="Dîner"
+            />
+          </section>
+        )
+      })}
+    </>
+  )
+}
+
+function Meal({
+  item,
+  icon,
+  label
+}: {
+  item?: Item
+  icon: string
+  label: string
+}) {
+  const content = (
+    <div className="meal">
+      <div className="thumb">{icon}</div>
+
+      <div>
+        <div className="muted">{label}</div>
+
+        <strong>
+          {item?.is_free_meal
+            ? 'Repas libre'
+            : item?.recipes?.title || 'À planifier'}
+        </strong>
+
+        {item?.recipes && (
+          <div className="kcal">
+            {item.recipes.kcal
+              ? `${Math.round(item.recipes.kcal)} kcal / portion`
+              : ''}
+            {' · '}
+            {item.recipes.prep_min + item.recipes.cook_min} min
+            {item.recipes.vegetarian ? ' · végétarien' : ''}
+          </div>
+        )}
+      </div>
+    </div>
+  )
+
+  if (item?.recipe_id && !item.is_free_meal) {
+    return (
+      <Link
+        className="meal-link"
+        href={`/recipes?recipe=${item.recipe_id}`}
+      >
+        {content}
+      </Link>
+    )
+  }
+
+  return content
+}
