@@ -20,9 +20,13 @@ export async function middleware(request: NextRequest) {
 
   const { data: { user } } = await supabase.auth.getUser()
   const isAuthRoute = request.nextUrl.pathname.startsWith('/auth') || request.nextUrl.pathname.startsWith('/invite/')
-  if (!user && request.nextUrl.searchParams.has('code')) {
+  const code = request.nextUrl.searchParams.get('code')
+  const type = request.nextUrl.searchParams.get('type')
+
+  if (!user && code) {
     const resetUrl = new URL('/auth/reset-password', request.url)
-    resetUrl.searchParams.set('code', request.nextUrl.searchParams.get('code')!)
+    resetUrl.searchParams.set('code', code)
+    if (type) resetUrl.searchParams.set('type', type)
     return NextResponse.redirect(resetUrl)
   }
 
