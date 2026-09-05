@@ -1,0 +1,5 @@
+'use client'
+import { useState } from 'react'
+import { useParams, useRouter } from 'next/navigation'
+import { supabaseBrowser } from '@/lib/supabase-browser'
+export default function Invite(){const p=useParams<{token:string}>();const router=useRouter();const [msg,setMsg]=useState('');const [loading,setLoading]=useState(false);async function accept(){setLoading(true);const sb=supabaseBrowser();const {data:{user}}=await sb.auth.getUser();if(!user){router.push(`/auth?next=/invite/${p.token}`);return}const {error}=await sb.rpc('accept_household_invite',{p_token:p.token});if(error)setMsg(error.message);else router.push('/')}return <main className="authpage"><div className="authlogo">Équilibre</div><div className="card authcard"><div className="bigemoji">🏠</div><h1>Rejoindre le foyer</h1><p className="muted">Tu as reçu une invitation à rejoindre Équilibre.</p><button className="btn" onClick={accept} disabled={loading}>{loading?'Connexion…':'Rejoindre le foyer'}</button>{msg&&<p className="error">{msg}</p>}</div></main>}
