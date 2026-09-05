@@ -55,7 +55,7 @@ create table if not exists public.menu_items (
 );
 create table if not exists public.weight_entries (
  id uuid primary key default gen_random_uuid(), user_id uuid references auth.users(id) on delete cascade,
- measured_on date not null, weight_kg numeric(5,2) not null check(weight_kg > 0), created_at timestamptz not null default now(), unique(user_id,measured_at)
+ measured_on date not null, weight_kg numeric(5,2) not null check(weight_kg > 0), created_at timestamptz not null default now(), unique(user_id,measured_on)
 );
 create table if not exists public.sport_sessions (
  id uuid primary key default gen_random_uuid(), user_id uuid references auth.users(id) on delete cascade,

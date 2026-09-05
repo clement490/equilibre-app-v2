@@ -5,11 +5,11 @@ export async function ensureAccount() {
   const { data: { user } } = await sb.auth.getUser()
   if (!user) return null
 
-  let { data: profile } = await sb.from('profiles').select('id,first_name,display_name,height_cm,target_weight_kg,preferences').eq('id', user.id).maybeSingle()
+  let { data: profile } = await sb.from('profiles').select('id,display_name,height_cm,target_weight_kg,avatar_url').eq('id', user.id).maybeSingle()
   if (!profile) {
-    const firstName = user.user_metadata?.first_name || (user.email?.split('@')[0] || 'Clément')
-    await sb.from('profiles').insert({ id: user.id, first_name: firstName, display_name: firstName })
-    const res = await sb.from('profiles').select('id,first_name,display_name,height_cm,target_weight_kg,preferences').eq('id', user.id).single()
+    const firstName = user.user_metadata?.display_name || user.email?.split('@')[0] || 'Clément'
+    await sb.from('profiles').insert({ id: user.id, display_name: firstName })
+    const res = await sb.from('profiles').select('id,display_name,height_cm,target_weight_kg,avatar_url').eq('id', user.id).single()
     profile = res.data
   }
 
@@ -26,8 +26,26 @@ export async function ensureAccount() {
 
 export async function householdMembers(householdId: string) {
   const sb = supabaseBrowser()
-  const { data } = await sb.rpc('get_household_members', { p_household_id: householdId })
-  return (data || []).map((m: any) => ({ id: m.user_id, name: m.first_name || m.display_name || 'Profil' }))
+  const { data: members } = await sb
+    .from('household_members')
+    .select('user_id,role')
+    .eq('household_id', householdId)
+
+  if (!members?.length) return []
+
+  const ids = members.map(m => m.user_id)
+  const { data: profiles } = await sb
+    .from('profiles')
+    .select('id,display_name')
+    .in('id', ids)
+
+  const names = new Map((profiles || []).map(p => [p.id, p.display_name]))
+
+  return members.map(m => ({
+    id: m.user_id,
+    name: names.get(m.user_id) || 'Profil',
+    role: m.role
+  }))
 }
 
 export function mondayOf(date = new Date()) {
