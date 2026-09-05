@@ -1,26 +1,121 @@
 'use client'
-import { Suspense, useState } from 'react'
-import { useSearchParams } from 'next/navigation'
+
+import { useState } from 'react'
 import { supabaseBrowser } from '@/lib/supabase-browser'
 
-function AuthContent() {
-  const params = useSearchParams()
+export default function Auth() {
   const [email, setEmail] = useState('')
-  const [sent, setSent] = useState(false)
+  const [password, setPassword] = useState('')
+  const [mode, setMode] = useState<'login' | 'signup'>('login')
   const [error, setError] = useState('')
+  const [loading, setLoading] = useState(false)
+
   async function submit(e: React.FormEvent) {
-    e.preventDefault(); setError('')
-    const { error } = await supabaseBrowser().auth.signInWithOtp({
+    e.preventDefault()
+    setError('')
+    setLoading(true)
+
+    const supabase = supabaseBrowser()
+
+    if (mode === 'login') {
+      const { error } = await supabase.auth.signInWithPassword({
+        email,
+        password,
+      })
+
+      if (error) {
+        setError('E-mail ou mot de passe incorrect.')
+        setLoading(false)
+        return
+      }
+
+      window.location.href = '/'
+      return
+    }
+
+    const { error } = await supabase.auth.signUp({
       email,
-      options: { emailRedirectTo: `${window.location.origin}/auth/callback?next=${encodeURIComponent(params.get('next') || '/')}` }
+      password,
     })
-    if (error) setError(error.message); else setSent(true)
+
+    if (error) {
+      setError(error.message)
+      setLoading(false)
+      return
+    }
+
+    window.location.href = '/'
   }
-  const queryError = params.get('error')
-  return <main className="authpage"><div className="authlogo">Équilibre</div><h1>Ton équilibre, simplement.</h1><p className="muted">Menus, recettes, courses, poids et sport réunis au même endroit.</p><div className="card authcard">{queryError && <p className="error">Le lien de connexion a expiré ou est invalide. Demande un nouveau lien.</p>}
-    {sent ? <><div className="bigemoji">✉️</div><h2>Regarde ta boîte mail</h2><p className="muted">Un lien de connexion vient d'être envoyé à <strong>{email}</strong>.</p></> : <form className="form" onSubmit={submit}><label>Adresse e-mail<input type="email" required placeholder="ton@email.fr" value={email} onChange={e=>setEmail(e.target.value)} /></label><button className="btn">Recevoir mon lien</button>{error && <p className="error">{error}</p>}</form>}
-  </div><p className="muted small">Aucun mot de passe à retenir.</p></main>
+
+  return (
+    <main className="authpage">
+      <div className="authlogo">Équilibre</div>
+
+      <h1>Ton équilibre, simplement.</h1>
+
+      <p className="muted">
+        Menus, recettes, courses, poids et sport réunis au même endroit.
+      </p>
+
+      <div className="card authcard">
+        <h2>{mode === 'login' ? 'Connexion' : 'Créer mon compte'}</h2>
+
+        <form className="form" onSubmit={submit}>
+          <label>
+            Adresse e-mail
+            <input
+              type="email"
+              required
+              autoComplete="email"
+              placeholder="ton@email.fr"
+              value={email}
+              onChange={e => setEmail(e.target.value)}
+            />
+          </label>
+
+          <label>
+            Mot de passe
+            <input
+              type="password"
+              required
+              minLength={6}
+              autoComplete={
+                mode === 'login' ? 'current-password' : 'new-password'
+              }
+              placeholder="••••••••"
+              value={password}
+              onChange={e => setPassword(e.target.value)}
+            />
+          </label>
+
+          <button className="btn" disabled={loading}>
+            {loading
+              ? 'Chargement…'
+              : mode === 'login'
+                ? 'Se connecter'
+                : 'Créer mon compte'}
+          </button>
+
+          {error && <p className="error">{error}</p>}
+        </form>
+
+        <button
+          type="button"
+          className="pill"
+          onClick={() => {
+            setMode(mode === 'login' ? 'signup' : 'login')
+            setError('')
+          }}
+        >
+          {mode === 'login'
+            ? 'Créer un nouveau compte'
+            : 'J’ai déjà un compte'}
+        </button>
+      </div>
+
+      <p className="muted small">
+        Connexion sécurisée avec ton adresse e-mail et ton mot de passe.
+      </p>
+    </main>
+  )
 }
-
-
-export default function Auth() { return <Suspense fallback={<main className="authpage"><div className="authlogo">Équilibre</div><p className="muted">Chargement…</p></main>}><AuthContent /></Suspense> }
