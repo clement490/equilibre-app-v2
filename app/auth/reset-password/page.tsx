@@ -1,42 +1,48 @@
 'use client'
 
 import { useEffect, useState } from 'react'
-import { useSearchParams } from 'next/navigation'
-import { Suspense } from 'react'
 import { supabaseBrowser } from '@/lib/supabase-browser'
 
-function ResetPasswordContent() {
-  const params = useSearchParams()
+export default function ResetPassword() {
   const [password, setPassword] = useState('')
   const [confirm, setConfirm] = useState('')
   const [error, setError] = useState('')
-  const [loading, setLoading] = useState(true)
+  const [ready, setReady] = useState(false)
   const [saved, setSaved] = useState(false)
 
   useEffect(() => {
-    async function prepare() {
-      const code = params.get('code')
+    const supabase = supabaseBrowser()
 
-      if (code) {
-        const { error } = await supabaseBrowser().auth.exchangeCodeForSession(code)
-        if (error) {
-          setError('Le lien de récupération est invalide ou expiré.')
-          setLoading(false)
-          return
+    const { data: listener } = supabase.auth.onAuthStateChange(
+      (event, session) => {
+        if (
+          (event === 'PASSWORD_RECOVERY' || event === 'SIGNED_IN') &&
+          session
+        ) {
+          setReady(true)
+          setError('')
         }
       }
+    )
 
-      const { data } = await supabaseBrowser().auth.getSession()
-
-      if (!data.session) {
-        setError('Impossible de valider le lien de récupération.')
+    supabase.auth.getSession().then(({ data }) => {
+      if (data.session) {
+        setReady(true)
+      } else {
+        setTimeout(() => {
+          supabase.auth.getSession().then(({ data: retry }) => {
+            if (retry.session) setReady(true)
+            else {
+              setError('Le lien de récupération est invalide ou expiré.')
+              setReady(true)
+            }
+          })
+        }, 1000)
       }
+    })
 
-      setLoading(false)
-    }
-
-    prepare()
-  }, [params])
+    return () => listener.subscription.unsubscribe()
+  }, [])
 
   async function submit(e: React.FormEvent) {
     e.preventDefault()
@@ -68,7 +74,7 @@ function ResetPasswordContent() {
     }, 1000)
   }
 
-  if (loading) {
+  if (!ready) {
     return (
       <main className="authpage">
         <div className="authlogo">Équilibre</div>
@@ -96,6 +102,7 @@ function ResetPasswordContent() {
                 type="password"
                 required
                 minLength={6}
+                autoComplete="new-password"
                 value={password}
                 onChange={e => setPassword(e.target.value)}
               />
@@ -107,6 +114,7 @@ function ResetPasswordContent() {
                 type="password"
                 required
                 minLength={6}
+                autoComplete="new-password"
                 value={confirm}
                 onChange={e => setConfirm(e.target.value)}
               />
@@ -121,13 +129,5 @@ function ResetPasswordContent() {
         )}
       </div>
     </main>
-  )
-}
-
-export default function ResetPassword() {
-  return (
-    <Suspense fallback={<main className="authpage">Chargement…</main>}>
-      <ResetPasswordContent />
-    </Suspense>
   )
 }
