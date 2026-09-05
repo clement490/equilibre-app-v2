@@ -3,36 +3,66 @@ import { NextResponse, type NextRequest } from 'next/server'
 
 export async function middleware(request: NextRequest) {
   let response = NextResponse.next({ request })
+
   const supabase = createServerClient(
     process.env.NEXT_PUBLIC_SUPABASE_URL!,
     process.env.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY!,
     {
       cookies: {
-        getAll() { return request.cookies.getAll() },
+        getAll() {
+          return request.cookies.getAll()
+        },
         setAll(items) {
-          items.forEach(({ name, value }) => request.cookies.set(name, value))
+          items.forEach(({ name, value, options }) => {
+            request.cookies.set(name, value)
+          })
           response = NextResponse.next({ request })
-          items.forEach(({ name, value, options }) => response.cookies.set(name, value, options))
+          items.forEach(({ name, value, options }) => {
+            response.cookies.set(name, value, options)
+          })
         },
       },
     }
   )
 
-  const { data: { user } } = await supabase.auth.getUser()
-  const isAuthRoute = request.nextUrl.pathname.startsWith('/auth') || request.nextUrl.pathname.startsWith('/invite/')
+  const {
+    data: { user },
+  } = await supabase.auth.getUser()
+
+  const pathname = request.nextUrl.pathname
+
+  // Toutes les pages d'authentification doivent être accessibles
+  // sans être connecté.
+  const isAuthRoute =
+    pathname.startsWith('/auth') ||
+    pathname.startsWith('/invite/')
+
+  // Les liens Supabase peuvent arriver avec ?code=...
   const code = request.nextUrl.searchParams.get('code')
   const type = request.nextUrl.searchParams.get('type')
 
   if (!user && code) {
     const resetUrl = new URL('/auth/reset-password', request.url)
     resetUrl.searchParams.set('code', code)
-    if (type) resetUrl.searchParams.set('type', type)
+
+    if (type) {
+      resetUrl.searchParams.set('type', type)
+    }
+
     return NextResponse.redirect(resetUrl)
   }
 
-  if (!user && !isAuthRoute) return NextResponse.redirect(new URL('/auth', request.url))
-  if (user && request.nextUrl.pathname === '/auth') return NextResponse.redirect(new URL('/', request.url))
+  if (!user && !isAuthRoute) {
+    return NextResponse.redirect(new URL('/auth', request.url))
+  }
+
+  if (user && pathname === '/auth') {
+    return NextResponse.redirect(new URL('/', request.url))
+  }
+
   return response
 }
 
-export const config = { matcher: ['/((?!_next/static|_next/image|favicon.ico).*)'] }
+export const config = {
+  matcher: ['/((?!_next/static|_next/image|favicon.ico).*)'],
+}
