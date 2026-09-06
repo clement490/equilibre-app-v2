@@ -75,7 +75,7 @@ export default function Planning() {
           servings,
           is_free_meal,
           recipe_id,
-          recipes (
+          recipes!menu_items_recipe_id_fkey (
             id,
             title,
             kcal,
