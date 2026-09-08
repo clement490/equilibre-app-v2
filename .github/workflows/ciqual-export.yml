@@ -23,29 +23,23 @@ jobs:
           python - <<'PY'
           import csv, re
           from openpyxl import load_workbook
-          src='/tmp/ciqual.xlsx'
-          wb=load_workbook(src, read_only=True, data_only=True)
+          wb=load_workbook('/tmp/ciqual.xlsx', read_only=True, data_only=True)
           ws=wb['composition nutritionnelle']
           rows=ws.iter_rows(values_only=True)
           headers=next(rows)
           def norm(s):
               return re.sub(r'[^a-z0-9]+','',str(s).lower().replace('é','e').replace('è','e').replace('ê','e').replace('à','a').replace('û','u').replace('î','i').replace('ô','o').replace('ç','c').replace('µ','u'))
           wanted={
-              'alim_code':'alim_code',
-              'alim_nom_fr':'alim_nom_fr',
-              'energie_reglement_ue_n11692011_kcal100g':'energie_kcal_100g',
+              'alimcode':'alim_code',
+              'alimnomfr':'alim_nom_fr',
+              'energiereglementuen11692011kcal100g':'energie_kcal_100g',
               'proteinesnxfacteurdejonesg100g':'proteines_g_100g',
               'glucidesg100g':'glucides_g_100g',
               'lipidesg100g':'lipides_g_100g',
               'fibresalimentairesg100g':'fibres_g_100g',
           }
           normalized={norm(c):i for i,c in enumerate(headers)}
-          def find(prefix):
-              if prefix in normalized: return normalized[prefix]
-              for k,i in normalized.items():
-                  if k.startswith(prefix) or prefix in k: return i
-              raise KeyError(prefix)
-          idx={out:find(key) for key,out in wanted.items()}
+          idx={out:normalized[key] for key,out in wanted.items()}
           with open('data/ciqual_2025_equilibre.csv','w',newline='',encoding='utf-8') as f:
               w=csv.writer(f)
               w.writerow(list(wanted.values()))
