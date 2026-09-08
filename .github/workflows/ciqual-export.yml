@@ -1,0 +1,49 @@
+name: Export Ciqual 2025
+
+on:
+  push:
+    branches:
+      - data/ciqual-2025-import
+
+permissions:
+  contents: write
+
+jobs:
+  export:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Download official Ciqual 2025 XLSX
+        run: |
+          curl -L --fail --retry 3 -o /tmp/ciqual.xlsx 'https://entrepot.recherche.data.gouv.fr/api/access/datafile/:persistentId?persistentId=doi:10.57745/RPWYZD'
+          test "$(md5sum /tmp/ciqual.xlsx | cut -d' ' -f1)" = '0d9758ce23f3f13dd63a005bc1bb4f2c'
+      - name: Convert to compact CSV
+        run: |
+          python -m pip install --quiet pandas openpyxl
+          python - <<'PY'
+          import pandas as pd
+          src='/tmp/ciqual.xlsx'
+          df=pd.read_excel(src, sheet_name='composition nutritionnelle', dtype=str)
+          cols={
+              'alim_code':'alim_code',
+              'alim_nom_fr':'alim_nom_fr',
+              'Energie, Règlement UE N°1169 2011 (kcal 100 g)':'energie_kcal_100g',
+              'Protéines, N x facteur de Jones (g 100 g)':'proteines_g_100g',
+              'Glucides (g 100 g)':'glucides_g_100g',
+              'Lipides (g 100 g)':'lipides_g_100g',
+              'Fibres alimentaires (g 100 g)':'fibres_g_100g',
+          }
+          missing=[c for c in cols if c not in df.columns]
+          if missing: raise SystemExit(f'Missing columns: {missing}')
+          out=df[list(cols)].rename(columns=cols)
+          out.to_csv('data/ciqual_2025_equilibre.csv', index=False)
+          assert len(out)==3484, len(out)
+          PY
+      - name: Commit generated data
+        run: |
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add data/ciqual_2025_equilibre.csv
+          git diff --cached --quiet && exit 0
+          git commit -m 'chore: add Ciqual 2025 nutrition dataset'
+          git push
