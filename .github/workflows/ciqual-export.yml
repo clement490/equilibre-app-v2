@@ -19,33 +19,43 @@ jobs:
           test "$(md5sum /tmp/ciqual.xlsx | cut -d' ' -f1)" = '0d9758ce23f3f13dd63a005bc1bb4f2c'
       - name: Convert to compact CSV
         run: |
-          python -m pip install --quiet pandas openpyxl
+          python -m pip install --quiet openpyxl
           python - <<'PY'
-          import pandas as pd
-          import re
+          import csv, re
+          from openpyxl import load_workbook
           src='/tmp/ciqual.xlsx'
-          df=pd.read_excel(src, sheet_name='composition nutritionnelle', dtype=str)
+          wb=load_workbook(src, read_only=True, data_only=True)
+          ws=wb['composition nutritionnelle']
+          rows=ws.iter_rows(values_only=True)
+          headers=next(rows)
           def norm(s):
-              return re.sub(r'[^a-z0-9]+', '', str(s).lower().replace('é','e').replace('è','e').replace('ê','e').replace('à','a').replace('û','u').replace('î','i').replace('ô','o').replace('ç','c').replace('µ','u'))
+              return re.sub(r'[^a-z0-9]+','',str(s).lower().replace('é','e').replace('è','e').replace('ê','e').replace('à','a').replace('û','u').replace('î','i').replace('ô','o').replace('ç','c').replace('µ','u'))
           wanted={
               'alim_code':'alim_code',
               'alim_nom_fr':'alim_nom_fr',
-              'energie_reglement_ue_n1169_2011_kcal_100_g':'energie_kcal_100g',
-              'proteines_n_x_facteur_de_jones_g_100_g':'proteines_g_100g',
-              'glucides_g_100_g':'glucides_g_100g',
-              'lipides_g_100_g':'lipides_g_100g',
-              'fibres_alimentaires_g_100_g':'fibres_g_100g',
+              'energie_reglement_ue_n11692011_kcal100g':'energie_kcal_100g',
+              'proteinesnxfacteurdejonesg100g':'proteines_g_100g',
+              'glucidesg100g':'glucides_g_100g',
+              'lipidesg100g':'lipides_g_100g',
+              'fibresalimentairesg100g':'fibres_g_100g',
           }
-          normalized={norm(c):c for c in df.columns}
+          normalized={norm(c):i for i,c in enumerate(headers)}
           def find(prefix):
-              for k,c in normalized.items():
-                  if k==prefix or k.startswith(prefix) or prefix in k:
-                      return c
+              if prefix in normalized: return normalized[prefix]
+              for k,i in normalized.items():
+                  if k.startswith(prefix) or prefix in k: return i
               raise KeyError(prefix)
-          cols={find(k):v for k,v in wanted.items()}
-          out=df[list(cols)].rename(columns=cols)
-          out.to_csv('data/ciqual_2025_equilibre.csv', index=False)
-          assert len(out)==3484, len(out)
+          idx={out:find(key) for key,out in wanted.items()}
+          with open('data/ciqual_2025_equilibre.csv','w',newline='',encoding='utf-8') as f:
+              w=csv.writer(f)
+              w.writerow(list(wanted.values()))
+              count=0
+              for row in rows:
+                  if not row or row[idx['alim_code']] is None: continue
+                  w.writerow([row[idx[out]] for out in wanted.values()])
+                  count += 1
+          assert count==3484, count
+          wb.close()
           PY
       - name: Commit generated data
         run: |
