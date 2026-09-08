@@ -22,19 +22,27 @@ jobs:
           python -m pip install --quiet pandas openpyxl
           python - <<'PY'
           import pandas as pd
+          import re
           src='/tmp/ciqual.xlsx'
           df=pd.read_excel(src, sheet_name='composition nutritionnelle', dtype=str)
-          cols={
+          def norm(s):
+              return re.sub(r'[^a-z0-9]+', '', str(s).lower().replace('é','e').replace('è','e').replace('ê','e').replace('à','a').replace('û','u').replace('î','i').replace('ô','o').replace('ç','c').replace('µ','u'))
+          wanted={
               'alim_code':'alim_code',
               'alim_nom_fr':'alim_nom_fr',
-              'Energie, Règlement UE N°1169 2011 (kcal 100 g)':'energie_kcal_100g',
-              'Protéines, N x facteur de Jones (g 100 g)':'proteines_g_100g',
-              'Glucides (g 100 g)':'glucides_g_100g',
-              'Lipides (g 100 g)':'lipides_g_100g',
-              'Fibres alimentaires (g 100 g)':'fibres_g_100g',
+              'energie_reglement_ue_n1169_2011_kcal_100_g':'energie_kcal_100g',
+              'proteines_n_x_facteur_de_jones_g_100_g':'proteines_g_100g',
+              'glucides_g_100_g':'glucides_g_100g',
+              'lipides_g_100_g':'lipides_g_100g',
+              'fibres_alimentaires_g_100_g':'fibres_g_100g',
           }
-          missing=[c for c in cols if c not in df.columns]
-          if missing: raise SystemExit(f'Missing columns: {missing}')
+          normalized={norm(c):c for c in df.columns}
+          def find(prefix):
+              for k,c in normalized.items():
+                  if k==prefix or k.startswith(prefix) or prefix in k:
+                      return c
+              raise KeyError(prefix)
+          cols={find(k):v for k,v in wanted.items()}
           out=df[list(cols)].rename(columns=cols)
           out.to_csv('data/ciqual_2025_equilibre.csv', index=False)
           assert len(out)==3484, len(out)
