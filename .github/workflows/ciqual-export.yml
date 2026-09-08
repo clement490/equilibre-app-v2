@@ -17,11 +17,11 @@ jobs:
         run: |
           curl -L --fail --retry 3 -o /tmp/ciqual.xlsx 'https://entrepot.recherche.data.gouv.fr/api/access/datafile/:persistentId?persistentId=doi:10.57745/RPWYZD'
           test "$(md5sum /tmp/ciqual.xlsx | cut -d' ' -f1)" = '0d9758ce23f3f13dd63a005bc1bb4f2c'
-      - name: Convert to compact CSV
+      - name: Convert to compact CSV and JSON
         run: |
           python -m pip install --quiet openpyxl
           python - <<'PY'
-          import csv, re
+          import csv, json, re
           from openpyxl import load_workbook
           wb=load_workbook('/tmp/ciqual.xlsx', read_only=True, data_only=True)
           ws=wb['composition nutritionnelle']
@@ -40,22 +40,25 @@ jobs:
           }
           normalized={norm(c):i for i,c in enumerate(headers)}
           idx={out:normalized[key] for key,out in wanted.items()}
+          data=[]
           with open('data/ciqual_2025_equilibre.csv','w',newline='',encoding='utf-8') as f:
               w=csv.writer(f)
               w.writerow(list(wanted.values()))
-              count=0
               for row in rows:
                   if not row or row[idx['alim_code']] is None: continue
-                  w.writerow([row[idx[out]] for out in wanted.values()])
-                  count += 1
-          assert count==3484, count
+                  rec={out:row[idx[out]] for out in wanted.values()}
+                  data.append(rec)
+                  w.writerow(list(rec.values()))
+          assert len(data)==3484, len(data)
+          with open('data/ciqual_2025_equilibre.json','w',encoding='utf-8') as f:
+              json.dump(data,f,ensure_ascii=False,separators=(',',':'))
           wb.close()
           PY
       - name: Commit generated data
         run: |
           git config user.name 'github-actions[bot]'
           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
-          git add data/ciqual_2025_equilibre.csv
+          git add data/ciqual_2025_equilibre.csv data/ciqual_2025_equilibre.json
           git diff --cached --quiet && exit 0
           git commit -m 'chore: add Ciqual 2025 nutrition dataset'
           git push
