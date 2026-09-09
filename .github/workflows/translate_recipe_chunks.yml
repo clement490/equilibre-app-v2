@@ -1,5 +1,5 @@
 name: Translate Équilibre recipes with NLLB
-# v7-8043: replace stalled Argos workers with NLLB batch translation + unit normalization
+# v8-8043: download NLLB directly in each worker; avoid stalled shared model artifact upload
 on:
   workflow_dispatch:
   push:
@@ -11,71 +11,60 @@ permissions:
   contents: write
 
 concurrency:
-  group: equilibre-recipe-translation-v7
+  group: equilibre-recipe-translation-v8
   cancel-in-progress: true
 
 env:
-  TRANSLATION_MODEL: nllb-model
+  TRANSLATION_MODEL: facebook/nllb-200-distilled-600M
 
 jobs:
-  prepare-model:
-    name: Prepare NLLB model
-    runs-on: ubuntu-latest
-    timeout-minutes: 30
-    steps:
-      - uses: actions/setup-python@v5
-        with:
-          python-version: '3.11'
-      - name: Install model downloader
-        run: pip install --no-cache-dir huggingface_hub
-      - name: Download model once
-        run: |
-          python - <<'PY'
-          from huggingface_hub import snapshot_download
-          snapshot_download(
-              'facebook/nllb-200-distilled-600M',
-              local_dir='nllb-model',
-              local_dir_use_symlinks=False,
-          )
-          PY
-      - name: Upload model artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: nllb-200-distilled-600M-model
-          path: nllb-model
-          if-no-files-found: error
-          retention-days: 1
-
   translate:
     name: Translate chunk ${{ matrix.chunk }}
     runs-on: ubuntu-latest
-    needs: prepare-model
-    timeout-minutes: 120
+    timeout-minutes: 180
     strategy:
       fail-fast: false
+      max-parallel: 17
       matrix:
         chunk: [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16]
     steps:
       - uses: actions/checkout@v4
+
       - uses: actions/setup-python@v5
         with:
           python-version: '3.11'
+
       - name: Install NLLB runtime
-        run: pip install --no-cache-dir torch transformers sentencepiece
-      - name: Download prepared NLLB model
-        uses: actions/download-artifact@v4
+        run: pip install --no-cache-dir torch transformers sentencepiece huggingface_hub
+
+      - name: Cache NLLB model
+        uses: actions/cache@v4
         with:
-          name: nllb-200-distilled-600M-model
-          path: nllb-model
+          path: ~/.cache/huggingface/hub
+          key: nllb-200-distilled-600M-v1
+
+      - name: Download/load NLLB model
+        env:
+          HF_HUB_ENABLE_HF_TRANSFER: '0'
+        run: |
+          python - <<'PY'
+          from transformers import AutoTokenizer, AutoModelForSeq2SeqLM
+          model = 'facebook/nllb-200-distilled-600M'
+          AutoTokenizer.from_pretrained(model, src_lang='eng_Latn', tgt_lang='fra_Latn')
+          AutoModelForSeq2SeqLM.from_pretrained(model)
+          print('NLLB model ready')
+          PY
+
       - name: Translate and normalize chunk
         env:
           CHUNKS: ${{ matrix.chunk }}
-          TRANSLATION_MODEL: nllb-model
+          TRANSLATION_MODEL: facebook/nllb-200-distilled-600M
         run: python tools/translate_recipe_chunks.py
+
       - name: Upload translated chunk
         uses: actions/upload-artifact@v4
         with:
-          name: translation-v7-chunk-${{ matrix.chunk }}
+          name: translation-v8-chunk-${{ matrix.chunk }}
           path: build/recipe_translations/chunk_${{ matrix.chunk }}.json
           if-no-files-found: error
           retention-days: 7
@@ -84,17 +73,20 @@ jobs:
     name: Merge and validate 8043 translations
     runs-on: ubuntu-latest
     needs: translate
-    timeout-minutes: 20
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
+
       - name: Prepare output directory
         run: mkdir -p build/recipe_translations
+
       - name: Download all translation artifacts
         uses: actions/download-artifact@v4
         with:
-          pattern: translation-v7-chunk-*
+          pattern: translation-v8-chunk-*
           path: build/recipe_translations
           merge-multiple: true
+
       - name: Validate complete corpus
         run: |
           python - <<'PY'
@@ -125,10 +117,11 @@ jobs:
           assert len(seen) == 8043, f'Expected 8043 unique recipes, got {len(seen)}'
           print(f'VALIDATION OK: {total} unique translated recipes across {len(files)} chunks')
           PY
+
       - name: Commit complete translation corpus
         run: |
           git config user.name 'equilibre-bot'
           git config user.email 'equilibre-bot@users.noreply.github.com'
           git add build/recipe_translations
-          git commit -m 'Build complete French translations for 8043 recipes'
+          git diff --cached --quiet && echo 'No new translation files to commit' || git commit -m 'Build complete French translations for 8043 recipes'
           git push
