@@ -1,6 +1,5 @@
 #!/usr/bin/env python3
 import json
-import os
 import re
 import sys
 import time
@@ -62,22 +61,24 @@ def load_first_ten():
     return data[:10]
 
 
-def generate(recipe, api_key, out_dir, index):
+def generate(recipe, out_dir, index):
     prompt = build_prompt(recipe)
     params = {
-        "model": "gpt-image-2",
+        "model": "flux",
         "width": 1024,
         "height": 768,
-        "enhance": "true",
+        "enhance": "false",
         "nologo": "true",
+        "private": "true",
     }
-    url = "https://gen.pollinations.ai/image/" + quote(prompt, safe="")
+    # Anonymous/legacy Pollinations image endpoint. No API key is sent.
+    url = "https://image.pollinations.ai/prompt/" + quote(prompt, safe="")
     started = time.time()
-    r = requests.get(url, params=params, headers={"Authorization": f"Bearer {api_key}"}, timeout=300)
+    r = requests.get(url, params=params, timeout=300)
     elapsed = int((time.time() - started) * 1000)
     if r.status_code != 200:
         detail = r.text[:1000]
-        raise RuntimeError(f"Pollinations HTTP {r.status_code}: {detail}")
+        raise RuntimeError(f"Pollinations anonymous HTTP {r.status_code}: {detail}")
     ctype = r.headers.get("content-type", "")
     if not ctype.startswith("image/"):
         raise RuntimeError(f"Unexpected content-type: {ctype}; body={r.text[:500]}")
@@ -94,7 +95,7 @@ def generate(recipe, api_key, out_dir, index):
         "model": params["model"],
         "width": params["width"],
         "height": params["height"],
-        "prompt_version": "equilibre-food-v1",
+        "prompt_version": "equilibre-food-v1-anonymous",
         "image_path": str(out_dir / filename),
         "http_status": r.status_code,
         "mime_type": ctype,
@@ -105,11 +106,6 @@ def generate(recipe, api_key, out_dir, index):
 
 
 def main():
-    api_key = os.environ.get("POLLINATIONS_API_KEY", "").strip()
-    if not api_key:
-        print("ERROR: GitHub secret POLLINATIONS_API_KEY is missing.", file=sys.stderr)
-        sys.exit(2)
-
     out_dir = Path("poc_images_v1")
     out_dir.mkdir(parents=True, exist_ok=True)
     recipes = load_first_ten()
@@ -126,9 +122,9 @@ def main():
         if recipe["source_recipe_id"] in done_ids:
             print(f"[{pos}/10] already generated: {recipe['title']}")
             continue
-        print(f"[{pos}/10] generating: {recipe['title']}", flush=True)
+        print(f"[{pos}/10] generating anonymously: {recipe['title']}", flush=True)
         try:
-            result = generate(recipe, api_key, out_dir, pos)
+            result = generate(recipe, out_dir, pos)
             results.append(result)
             manifest_path.write_text(json.dumps(results, ensure_ascii=False, indent=2), encoding="utf-8")
             print(f"[{pos}/10] OK {result['bytes']} bytes", flush=True)
@@ -148,7 +144,7 @@ def main():
             print("Waiting 120 seconds before the next generation...", flush=True)
             time.sleep(120)
 
-    print("POC complete: 10 individual recipe images processed.")
+    print("POC complete: 10 individual recipe images processed anonymously.")
 
 
 if __name__ == "__main__":
