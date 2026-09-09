@@ -1,5 +1,5 @@
-name: Translate Équilibre recipes offline
-# v6-8043: isolated run after translation worker fixes
+name: Translate Équilibre recipes with NLLB
+# v7-8043: replace stalled Argos workers with NLLB batch translation + unit normalization
 on:
   workflow_dispatch:
   push:
@@ -11,13 +11,46 @@ permissions:
   contents: write
 
 concurrency:
-  group: equilibre-recipe-translation-v6
+  group: equilibre-recipe-translation-v7
   cancel-in-progress: true
 
+env:
+  TRANSLATION_MODEL: facebook/nllb-200-distilled-600M
+
 jobs:
+  prepare-model:
+    name: Prepare NLLB model
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Install model dependencies
+        run: pip install --no-cache-dir torch transformers sentencepiece huggingface_hub
+      - name: Download model once
+        run: |
+          python - <<'PY'
+          import os
+          from huggingface_hub import snapshot_download
+          model = os.environ['TRANSLATION_MODEL']
+          path = snapshot_download(model, allow_patterns=[
+              '*.json', '*.safetensors', '*.model', '*.txt', '*.bin'
+          ])
+          print(path)
+          PY
+      - name: Upload model artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: nllb-200-distilled-600M-model
+          path: ~/.cache/huggingface/hub/models--facebook--nllb-200-distilled-600M
+          if-no-files-found: error
+          retention-days: 1
+
   translate:
     name: Translate chunk ${{ matrix.chunk }}
     runs-on: ubuntu-latest
+    needs: prepare-model
     timeout-minutes: 120
     strategy:
       fail-fast: false
@@ -28,16 +61,22 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: '3.11'
-      - name: Install Argos Translate
-        run: pip install --no-cache-dir argostranslate==1.10.0
-      - name: Translate chunk
+      - name: Install NLLB runtime
+        run: pip install --no-cache-dir torch transformers sentencepiece
+      - name: Download prepared NLLB model
+        uses: actions/download-artifact@v4
+        with:
+          name: nllb-200-distilled-600M-model
+          path: ~/.cache/huggingface/hub/models--facebook--nllb-200-distilled-600M
+      - name: Translate and normalize chunk
         env:
           CHUNKS: ${{ matrix.chunk }}
+          HF_HUB_OFFLINE: '1'
         run: python tools/translate_recipe_chunks.py
       - name: Upload translated chunk
         uses: actions/upload-artifact@v4
         with:
-          name: translation-v6-chunk-${{ matrix.chunk }}
+          name: translation-v7-chunk-${{ matrix.chunk }}
           path: build/recipe_translations/chunk_${{ matrix.chunk }}.json
           if-no-files-found: error
           retention-days: 7
@@ -54,7 +93,7 @@ jobs:
       - name: Download all translation artifacts
         uses: actions/download-artifact@v4
         with:
-          pattern: translation-v6-chunk-*
+          pattern: translation-v7-chunk-*
           path: build/recipe_translations
           merge-multiple: true
       - name: Validate complete corpus
@@ -79,6 +118,8 @@ jobs:
                   assert isinstance(r.get('instructions_fr'), list), f'{p}:{i} invalid instructions_fr'
                   assert len(r['ingredients_fr']) > 0, f'{p}:{i} empty ingredients_fr'
                   assert len(r['instructions_fr']) > 0, f'{p}:{i} empty instructions_fr'
+                  assert not any(x is None or not str(x).strip() for x in r['ingredients_fr']), f'{p}:{i} empty ingredient'
+                  assert not any(x is None or not str(x).strip() for x in r['instructions_fr']), f'{p}:{i} empty instruction'
               total += len(rows)
               print(f'{p.name}: {len(rows)}')
           assert total == 8043, f'Expected 8043 recipes, got {total}'
