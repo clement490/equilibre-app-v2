@@ -21,19 +21,7 @@ jobs:
         with:
           fetch-depth: 1
 
-      - name: Verify Pollinations key
-        env:
-          POLLINATIONS_API_KEY: ${{ secrets.POLLINATIONS_API_KEY }}
-        run: |
-          if [ -z "$POLLINATIONS_API_KEY" ]; then
-            echo "Missing GitHub Actions secret: POLLINATIONS_API_KEY"
-            exit 2
-          fi
-          echo "Pollinations key is configured."
-
-      - name: Generate 10 images, one every 2 minutes
-        env:
-          POLLINATIONS_API_KEY: ${{ secrets.POLLINATIONS_API_KEY }}
+      - name: Generate 10 images anonymously, one every 2 minutes
         run: |
           python3 -m pip install --disable-pip-version-check requests
           python3 tools/generate_recipe_images_poc.py
