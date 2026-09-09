@@ -61,6 +61,14 @@ def load_first_ten():
     return data[:10]
 
 
+def safe_filename_component(value: str) -> str:
+    # Source names/IDs may contain '/' (e.g. nested recipe paths). Never allow
+    # untrusted recipe identifiers to create subdirectories in the output tree.
+    value = str(value)
+    value = re.sub(r"[^A-Za-z0-9._-]+", "_", value).strip("._")
+    return value or "unknown"
+
+
 def generate(recipe, out_dir, index):
     prompt = build_prompt(recipe)
     params = {
@@ -83,8 +91,12 @@ def generate(recipe, out_dir, index):
     if not ctype.startswith("image/"):
         raise RuntimeError(f"Unexpected content-type: {ctype}; body={r.text[:500]}")
     ext = ".jpg" if "jpeg" in ctype else ".png"
-    filename = f"{index:02d}_{recipe['source_name']}_{recipe['source_recipe_id']}{ext}"
-    (out_dir / filename).write_bytes(r.content)
+    source_name = safe_filename_component(recipe["source_name"])
+    source_recipe_id = safe_filename_component(recipe["source_recipe_id"])
+    filename = f"{index:02d}_{source_name}_{source_recipe_id}{ext}"
+    output_path = out_dir / filename
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    output_path.write_bytes(r.content)
     return {
         "index": index,
         "source_name": recipe["source_name"],
@@ -96,7 +108,7 @@ def generate(recipe, out_dir, index):
         "width": params["width"],
         "height": params["height"],
         "prompt_version": "equilibre-food-v1-anonymous",
-        "image_path": str(out_dir / filename),
+        "image_path": str(output_path),
         "http_status": r.status_code,
         "mime_type": ctype,
         "bytes": len(r.content),
