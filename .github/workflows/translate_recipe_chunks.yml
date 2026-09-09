@@ -1,0 +1,27 @@
+name: Translate Équilibre recipes offline
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - tools/translate_recipe_chunks.py
+      - .github/workflows/translate_recipe_chunks.yml
+permissions:
+  contents: write
+jobs:
+  translate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 330
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - run: pip install --no-cache-dir argostranslate==1.10.0
+      - run: python tools/translate_recipe_chunks.py
+      - name: Commit translations
+        run: |
+          git config user.name 'equilibre-bot'
+          git config user.email 'equilibre-bot@users.noreply.github.com'
+          git add build/recipe_translations
+          git commit -m 'Build French translations for Équilibre corpus' || true
+          git push
