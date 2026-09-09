@@ -32,3 +32,5 @@ jobs:
           git add build/recipe_image_map.json
           git commit -m "Resolve source images for 8043 Équilibre recipes" || exit 0
           git push
+
+# Trigger full 8043 image resolution after POC validation
