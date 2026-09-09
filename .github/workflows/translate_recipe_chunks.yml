@@ -15,7 +15,7 @@ concurrency:
   cancel-in-progress: true
 
 env:
-  TRANSLATION_MODEL: facebook/nllb-200-distilled-600M
+  TRANSLATION_MODEL: nllb-model
 
 jobs:
   prepare-model:
@@ -26,24 +26,23 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: '3.11'
-      - name: Install model dependencies
-        run: pip install --no-cache-dir torch transformers sentencepiece huggingface_hub
+      - name: Install model downloader
+        run: pip install --no-cache-dir huggingface_hub
       - name: Download model once
         run: |
           python - <<'PY'
-          import os
           from huggingface_hub import snapshot_download
-          model = os.environ['TRANSLATION_MODEL']
-          path = snapshot_download(model, allow_patterns=[
-              '*.json', '*.safetensors', '*.model', '*.txt', '*.bin'
-          ])
-          print(path)
+          snapshot_download(
+              'facebook/nllb-200-distilled-600M',
+              local_dir='nllb-model',
+              local_dir_use_symlinks=False,
+          )
           PY
       - name: Upload model artifact
         uses: actions/upload-artifact@v4
         with:
           name: nllb-200-distilled-600M-model
-          path: ~/.cache/huggingface/hub/models--facebook--nllb-200-distilled-600M
+          path: nllb-model
           if-no-files-found: error
           retention-days: 1
 
@@ -67,11 +66,11 @@ jobs:
         uses: actions/download-artifact@v4
         with:
           name: nllb-200-distilled-600M-model
-          path: ~/.cache/huggingface/hub/models--facebook--nllb-200-distilled-600M
+          path: nllb-model
       - name: Translate and normalize chunk
         env:
           CHUNKS: ${{ matrix.chunk }}
-          HF_HUB_OFFLINE: '1'
+          TRANSLATION_MODEL: nllb-model
         run: python tools/translate_recipe_chunks.py
       - name: Upload translated chunk
         uses: actions/upload-artifact@v4
