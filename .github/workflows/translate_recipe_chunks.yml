@@ -1,5 +1,5 @@
 name: Translate Équilibre recipes offline
-# v5-8043: one worker per chunk so all 17 chunks finish independently
+# v6-8043: isolated run after translation worker fixes
 on:
   workflow_dispatch:
   push:
@@ -11,8 +11,8 @@ permissions:
   contents: write
 
 concurrency:
-  group: equilibre-recipe-translation
-  cancel-in-progress: false
+  group: equilibre-recipe-translation-v6
+  cancel-in-progress: true
 
 jobs:
   translate:
@@ -37,7 +37,7 @@ jobs:
       - name: Upload translated chunk
         uses: actions/upload-artifact@v4
         with:
-          name: translation-chunk-${{ matrix.chunk }}
+          name: translation-v6-chunk-${{ matrix.chunk }}
           path: build/recipe_translations/chunk_${{ matrix.chunk }}.json
           if-no-files-found: error
           retention-days: 7
@@ -54,7 +54,7 @@ jobs:
       - name: Download all translation artifacts
         uses: actions/download-artifact@v4
         with:
-          pattern: translation-chunk-*
+          pattern: translation-v6-chunk-*
           path: build/recipe_translations
           merge-multiple: true
       - name: Validate complete corpus
@@ -76,7 +76,9 @@ jobs:
                   seen.add(rid)
                   assert r.get('title_fr'), f'{p}:{i} missing title_fr'
                   assert isinstance(r.get('ingredients_fr'), list), f'{p}:{i} invalid ingredients_fr'
-                  assert r.get('instructions_fr') is not None, f'{p}:{i} missing instructions_fr'
+                  assert isinstance(r.get('instructions_fr'), list), f'{p}:{i} invalid instructions_fr'
+                  assert len(r['ingredients_fr']) > 0, f'{p}:{i} empty ingredients_fr'
+                  assert len(r['instructions_fr']) > 0, f'{p}:{i} empty instructions_fr'
               total += len(rows)
               print(f'{p.name}: {len(rows)}')
           assert total == 8043, f'Expected 8043 recipes, got {total}'
