@@ -1,5 +1,5 @@
 name: Translate Équilibre recipes offline
-# v2-8043 translation run: resumable local Argos pipeline
+# v3-8043: French translation + deterministic metric normalization
 on:
   workflow_dispatch:
   push:
@@ -8,6 +8,9 @@ on:
       - .github/workflows/translate_recipe_chunks.yml
 permissions:
   contents: write
+concurrency:
+  group: equilibre-recipe-translation
+  cancel-in-progress: true
 jobs:
   translate:
     runs-on: ubuntu-latest
@@ -24,5 +27,5 @@ jobs:
           git config user.name 'equilibre-bot'
           git config user.email 'equilibre-bot@users.noreply.github.com'
           git add build/recipe_translations
-          git commit -m 'Build French translations for Équilibre corpus' || true
+          git commit -m 'Build French translations and metric units for Équilibre corpus' || true
           git push
