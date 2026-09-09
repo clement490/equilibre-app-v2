@@ -1,4 +1,5 @@
 name: Translate Équilibre recipes offline
+# v2-8043 translation run: resumable local Argos pipeline
 on:
   workflow_dispatch:
   push:
