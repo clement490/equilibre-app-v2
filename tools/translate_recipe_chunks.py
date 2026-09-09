@@ -21,10 +21,7 @@ device = "cuda" if torch.cuda.is_available() else "cpu"
 tokenizer = AutoTokenizer.from_pretrained(MODEL, src_lang="eng_Latn", tgt_lang="fra_Latn")
 model = AutoModelForSeq2SeqLM.from_pretrained(MODEL, torch_dtype=torch.float16 if device == "cuda" else torch.float32)
 model = model.to(device).eval()
-if device == "cuda":
-    print("Using CUDA/FP16", flush=True)
-else:
-    print("Using CPU/FP32", flush=True)
+print(f"Using {'CUDA/FP16' if device == 'cuda' else 'CPU/FP32'}", flush=True)
 
 cache = {}
 
@@ -47,7 +44,7 @@ def translate_batch(values):
             print(f"Translated {min(start + 16, len(missing))}/{len(missing)} new strings", flush=True)
     return [cache.get(x, "") if x else "" for x in clean]
 
-# Common culinary units. Ingredient-specific density is used when a volume must become grams.
+# Culinary unit conversions. Volume conversions require an ingredient density.
 UNIT_TO_ML = {
     "ml": 1.0, "milliliter": 1.0, "milliliters": 1.0,
     "l": 1000.0, "liter": 1000.0, "liters": 1000.0,
@@ -66,26 +63,29 @@ MASS_TO_G = {
     "lb": 453.592, "lbs": 453.592, "pound": 453.592, "pounds": 453.592,
 }
 DENSITY_G_PER_ML = {
-    "water": 1.0, "milk": 1.03, "cream": 1.01, "heavy cream": 0.99,
+    "water": 1.00, "milk": 1.03, "cream": 1.01, "heavy cream": 0.99,
     "olive oil": 0.91, "vegetable oil": 0.92, "canola oil": 0.92, "oil": 0.92,
     "honey": 1.42, "maple syrup": 1.32, "syrup": 1.32,
     "soy sauce": 1.06, "vinegar": 1.01, "lemon juice": 1.03, "lime juice": 1.03,
     "orange juice": 1.04, "yogurt": 1.03, "yoghurt": 1.03,
-    "flour": 0.53, "all purpose flour": 0.53, "plain flour": 0.53,
-    "whole wheat flour": 0.48, "sugar": 0.85, "brown sugar": 0.72,
-    "powdered sugar": 0.56, "confectioners sugar": 0.56, "salt": 1.22,
-    "rice": 0.85, "rolled oats": 0.40, "oats": 0.40,
+    "all purpose flour": 0.53, "plain flour": 0.53, "flour": 0.53, "whole wheat flour": 0.48,
+    "granulated sugar": 0.85, "sugar": 0.85, "brown sugar": 0.72, "powdered sugar": 0.56,
+    "confectioners sugar": 0.56, "salt": 1.22, "rice": 0.85, "rolled oats": 0.40, "oats": 0.40,
     "breadcrumbs": 0.50, "bread crumbs": 0.50, "cocoa powder": 0.43,
     "cornstarch": 0.54, "corn starch": 0.54, "peanut butter": 1.06,
     "butter": 0.96, "mayonnaise": 0.91, "mustard": 1.01,
+    "chopped onion": 0.68, "onion": 0.68, "chopped tomato": 0.76, "tomato": 0.76,
+    "shredded cheese": 0.42, "grated cheese": 0.42, "cheese": 0.42,
+    "chopped carrot": 0.64, "carrot": 0.64, "chopped celery": 0.50, "celery": 0.50,
 }
 
-NUMBER = r"(?:\d+(?:\.\d+)?|\d+\s+\d+/\d+|\d+/\d+)"
-UNIT_RE = re.compile(rf"^\s*(?P<qty>{NUMBER})\s+(?P<unit>[a-zA-Z]+(?:\s+[a-zA-Z]+)?)\b(?P<rest>.*)$", re.I)
+NUMBER = r"(?:\d+\s+\d+/\d+|\d+/\d+|\d+(?:[.,]\d+)?)"
+UNIT_NAMES = sorted(UNIT_TO_ML | MASS_TO_G, key=len, reverse=True)
+UNIT_RE = re.compile(rf"^\s*(?P<qty>{NUMBER})\s+(?P<unit>{'|'.join(re.escape(x) for x in UNIT_NAMES)})\b(?P<rest>.*)$", re.I)
 FRACTION = {"1/2": 0.5, "1/3": 1/3, "2/3": 2/3, "1/4": 0.25, "3/4": 0.75, "1/8": 0.125}
 
 def parse_number(s):
-    s = s.strip()
+    s = s.strip().replace(",", ".")
     if " " in s and "/" in s:
         a, b = s.split()
         return float(a) + parse_number(b)
@@ -104,16 +104,26 @@ def density_for(rest):
             return DENSITY_G_PER_ML[key]
     return None
 
+def strip_translated_quantity(text):
+    # NLLB may translate "1 cup" as "1 tasse"; remove that leading quantity/unit
+    # before inserting the canonical gram quantity derived from the English source.
+    return re.sub(
+        r"^\s*[\d\s/.,]+\s*(?:g|kg|mg|ml|l|oz|lb|lbs|cup|cups|tasse|tasses|tbsp|tsp|c\.?\s*[àa]\.?\s*soupe|cuillère(?:s)?\s*[àa]\.?\s*soupe|teaspoon(?:s)?|tablespoon(?:s)?|ounce(?:s)?|pound(?:s)?|liter(?:s)?|litre(?:s)?|milliliter(?:s)?|millilitre(?:s)?)\b\s*",
+        "",
+        text,
+        count=1,
+        flags=re.I,
+    ).strip()
+
 def normalize_ingredient(source, translated):
-    if not source:
+    if not source or not translated:
         return translated
     m = UNIT_RE.match(source)
     if not m:
         return translated
     qty = parse_number(m.group("qty"))
-    unit_raw = m.group("unit").strip().lower()
+    unit = m.group("unit").strip().lower()
     rest = m.group("rest").strip()
-    unit = unit_raw
     if unit in MASS_TO_G:
         grams = qty * MASS_TO_G[unit]
     elif unit in UNIT_TO_ML:
@@ -123,10 +133,7 @@ def normalize_ingredient(source, translated):
         grams = qty * UNIT_TO_ML[unit] * density
     else:
         return translated
-    grams_s = f"{grams:.0f} g"
-    # Replace only the leading quantity/unit in the French translation.
-    fr = re.sub(r"^\s*\d+(?:[.,]\d+)?(?:\s+\d+/\d+)?\s*(?:g|kg|ml|l|oz|lb|lbs|cup|cups|tbsp|tsp|teaspoon|tablespoon|ounce|pound|liter|liters|milliliter|milliliters)\b\s*", "", translated, count=1, flags=re.I)
-    return f"{grams_s} {fr.strip()}".strip()
+    return f"{grams:.0f} g {strip_translated_quantity(translated)}".strip()
 
 for idx in chunk_indexes:
     src = ROOT / "data" / "recipe_box_v2" / f"chunk_{idx:02d}.json"
