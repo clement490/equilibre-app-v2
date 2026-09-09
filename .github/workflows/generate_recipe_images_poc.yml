@@ -1,0 +1,48 @@
+name: Équilibre AI recipe images — 10 image POC
+
+on:
+  push:
+    paths:
+      - tools/generate_recipe_images_poc.py
+      - .github/workflows/generate_recipe_images_poc.yml
+      - data/recipe_box_v2/chunk_00.json
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  generate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+
+      - name: Verify Pollinations key
+        env:
+          POLLINATIONS_API_KEY: ${{ secrets.POLLINATIONS_API_KEY }}
+        run: |
+          if [ -z "$POLLINATIONS_API_KEY" ]; then
+            echo "Missing GitHub Actions secret: POLLINATIONS_API_KEY"
+            exit 2
+          fi
+          echo "Pollinations key is configured."
+
+      - name: Generate 10 images, one every 2 minutes
+        env:
+          POLLINATIONS_API_KEY: ${{ secrets.POLLINATIONS_API_KEY }}
+        run: |
+          python3 -m pip install --disable-pip-version-check requests
+          python3 tools/generate_recipe_images_poc.py
+
+      - name: Upload POC images and manifest
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: equilibre-recipe-images-poc-v1
+          path: poc_images_v1/
+          if-no-files-found: warn
+          retention-days: 7
