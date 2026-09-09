@@ -1,31 +1,91 @@
 name: Translate Équilibre recipes offline
-# v3-8043: French translation + deterministic metric normalization
+# v4-8043: parallel workers + deterministic metric normalization + final validation
 on:
   workflow_dispatch:
   push:
     paths:
       - tools/translate_recipe_chunks.py
       - .github/workflows/translate_recipe_chunks.yml
+
 permissions:
   contents: write
+
 concurrency:
   group: equilibre-recipe-translation
   cancel-in-progress: true
+
 jobs:
   translate:
+    name: Translate chunks ${{ matrix.chunks }}
     runs-on: ubuntu-latest
-    timeout-minutes: 330
+    timeout-minutes: 120
+    strategy:
+      fail-fast: false
+      matrix:
+        chunks:
+          - "0,1,2,3,4"
+          - "5,6,7,8"
+          - "9,10,11,12"
+          - "13,14,15,16"
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with:
           python-version: '3.11'
-      - run: pip install --no-cache-dir argostranslate==1.10.0
-      - run: python tools/translate_recipe_chunks.py
+      - name: Install Argos Translate
+        run: pip install --no-cache-dir argostranslate==1.10.0
+      - name: Translate assigned chunks
+        env:
+          CHUNKS: ${{ matrix.chunks }}
+        run: python tools/translate_recipe_chunks.py
+      - name: Upload translated chunks
+        uses: actions/upload-artifact@v4
+        with:
+          name: translations-${{ strategy.job-index }}
+          path: build/recipe_translations/chunk_*.json
+          if-no-files-found: error
+          retention-days: 7
+
+  merge-and-validate:
+    name: Merge and validate 8043 translations
+    runs-on: ubuntu-latest
+    needs: translate
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - name: Prepare output directory
+        run: mkdir -p build/recipe_translations
+      - name: Download all translation artifacts
+        uses: actions/download-artifact@v4
+        with:
+          pattern: translations-*
+          path: build/recipe_translations
+          merge-multiple: true
+      - name: Validate complete corpus
+        run: |
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          out = Path('build/recipe_translations')
+          files = sorted(out.glob('chunk_*.json'))
+          assert len(files) == 17, f'Expected 17 chunks, got {len(files)}'
+          total = 0
+          for p in files:
+              rows = json.loads(p.read_text())
+              assert rows, f'{p} is empty'
+              for i, r in enumerate(rows):
+                  assert r.get('title_fr'), f'{p}:{i} missing title_fr'
+                  assert isinstance(r.get('ingredients_fr'), list), f'{p}:{i} invalid ingredients_fr'
+                  assert r.get('instructions_fr') is not None, f'{p}:{i} missing instructions_fr'
+              total += len(rows)
+              print(f'{p.name}: {len(rows)}')
+          assert total == 8043, f'Expected 8043 recipes, got {total}'
+          print(f'VALIDATION OK: {total} translated recipes across {len(files)} chunks')
+          PY
       - name: Commit translations
         run: |
           git config user.name 'equilibre-bot'
           git config user.email 'equilibre-bot@users.noreply.github.com'
           git add build/recipe_translations
-          git commit -m 'Build French translations and metric units for Équilibre corpus' || true
+          git commit -m 'Build French translations and metric units for 8043 recipes'
           git push
