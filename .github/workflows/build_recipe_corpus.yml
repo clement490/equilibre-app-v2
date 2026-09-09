@@ -1,0 +1,48 @@
+name: Build Équilibre recipe corpus
+
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - tools/select_recipe_corpus.py
+      - .github/workflows/build_recipe_corpus.yml
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+
+      - name: Download source datasets
+        run: |
+          mkdir -p raw
+          curl -L --fail --retry 3 -o raw/recipes_raw_nosource_ar.json https://raw.githubusercontent.com/kz882/recipe/master/recipes_raw_nosource_ar.json
+          curl -L --fail --retry 3 -o raw/recipes_raw_nosource_epi.json https://raw.githubusercontent.com/kz882/recipe/master/recipes_raw_nosource_epi.json
+          curl -L --fail --retry 3 -o raw/recipes_raw_nosource_fn.json https://raw.githubusercontent.com/kz882/recipe/master/recipes_raw_nosource_fn.json
+
+      - name: Select exact Équilibre corpus
+        run: python3 tools/select_recipe_corpus.py
+
+      - name: Verify corpus
+        run: |
+          test "$(wc -l < build/equilibre_selected_v2.ndjson)" -eq 8043
+          test "$(find build -name 'chunk_*.json' | wc -l)" -eq 17
+
+      - name: Publish corpus chunks
+        run: |
+          rm -rf data/recipe_box_v2
+          mkdir -p data/recipe_box_v2
+          cp build/chunk_*.json data/recipe_box_v2/
+          cp build/equilibre_selected_v2.ndjson data/recipe_box_v2/
+          rm -f data/recipe_box_v2/chunk_00.placeholder
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add data/recipe_box_v2
+          git commit -m "Publish exact 8043-recipe Équilibre corpus" || exit 0
+          git push
